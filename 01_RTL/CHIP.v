@@ -29,46 +29,59 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
     // TODO: any declaration
-
+    parameter word_depth = 32;
+    parameter addr_width = 5; // 2^addr_width >= word_depth
+    parameter SINGLE = 1'b0;
+    parameter MULTIPLE = 1'b1;
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Wires and Registers
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // TODO: any declaration
-        reg [BIT_W-1:0] PC, next_PC;
-        wire mem_cen, mem_wen;
-        wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
-        wire mem_stall;
+        reg [BIT_W-1:0] PC = 32'h00010000;
+
+        wire Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite;
+        wire [1:0] ALUOp;
+        wire [BIT_W-1:0] WriteData, ReadData1, ReadData2;
+        wire [BIT_W-1:0] alu_in_2;
+        wire Zero;
+        wire [BIT_W-1:0] ALUresult;
+        wire jump; // (Branch && Zero): pc_mux_control
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Continuous Assignment
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 
     // TODO: any wire assignment
+    assign jump = Branch && Zero;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
+    Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite));
+    Immediate_gen imm_gen(.instruction(i_IMEM_data), .imm_addr(imm_addr));
+    Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), ione(imm_addr), .out(alu_in_2));
 
     // TODO: Reg_file wire connection
     Reg_file reg0(               
         .i_clk  (i_clk),             
         .i_rst_n(i_rst_n),         
-        .wen    (),          
-        .rs1    (),                
-        .rs2    (),                
-        .rd     (),                 
-        .wdata  (),             
-        .rdata1 (),           
-        .rdata2 ()
+        .wen    (RegWrite),          
+        .rs1    (i_IMEM_data[19:15]),                
+        .rs2    (i_IMEM_data[24:20]),                
+        .rd     (i_IMEM_data[11:7]),                 
+        .wdata  (WriteData),             
+        .rdata1 (ReadData1),           
+        .rdata2 (ReadData2)
     );
+
+
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Always Blocks
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // Todo: any combinational/sequential circuit
-
     always @(posedge i_clk or negedge i_rst_n) begin
         if (!i_rst_n) begin
             PC <= 32'h00010000; // Do not modify this value!!!
@@ -77,6 +90,200 @@ module CHIP #(                                                                  
             PC <= next_PC;
         end
     end
+endmodule
+
+module Mux #(parameter BIT_W = 32)(
+    input control,
+    input [BIT_W-1:0] izero, ione,
+    input [BIT_W-1:0] out
+);
+    assign out = (control)? ione: izero;
+endmodule
+
+module Control(
+    input [6:0] opcode,
+    output Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite,
+    output [1:0] ALUOp
+);
+    always @(*) begin
+        case (opcode[6:2])
+            // R-type: add, sub, and, xor
+            5'b01100: begin 
+                ALUSrc = 1'b0;
+                RegWrite = 1'b1;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b10; 
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            // I-type: lw
+            5'b00000: begin 
+                ALUSrc = 1'b1;
+                RegWrite = 1'b1;
+                MemRead = 1'b1;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b1;
+                Branch = 1'b0;
+                ALUOp = 2'b00; // add
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            5'b00100: begin // I-type: immediate
+            // addi: add
+            // slti: sub
+                ALUSrc = 1'b1;
+                RegWrite = 1'b1;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b10; // to be determined by func3 & func7
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            5'b11001: begin // I-type: jalr
+            // jalr: add
+                ALUSrc = 1'b1;
+                RegWrite = 1'b1;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b00;
+                Jal = 1'b0;
+                Jalr = 1'b1;
+            end
+            5'b01000: begin // S-type
+                ALUSrc = 1'b1;
+                RegWrite = 1'b0;
+                MemRead = 1'b0;
+                MemWrite = 1'b1;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b00; // add
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            5'b11000: begin // B-type
+                ALUSrc = 1'b0;
+                RegWrite = 1'b0;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b1;
+                ALUOp = 2'b01; // sub
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            5'b11011: begin // J-type: jal
+                ALUSrc = 1'b1;
+                RegWrite = 1'b1;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b00; // add
+                Jal = 1'b1;
+                Jalr = 1'b0;
+            end
+            5'b00101: begin // U-type: auipc
+                ALUSrc = 1'b1;
+                RegWrite = 1'b1;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b00;
+                Jal = 1'b0;
+                Jalr = 1'b0;
+            end
+            default: begin
+                ALUSrc = 1'b0;
+                RegWrite = 1'b0;
+                MemRead = 1'b0;
+                MemWrite = 1'b0;
+                MemtoReg = 1'b0;
+                Branch = 1'b0;
+                ALUOp = 2'b00;
+                Jal = 1'b0;
+                Jalr = 1'b0;                
+            end
+        endcase
+    end
+endmodule
+
+module Immediate_gen #(parameter BIT_W = 32)(
+    input  [BIT_W-1:0] instruction;
+    output [BIT_W-1:0] imm_addr;
+);
+    always@(*) begin
+        case(instruction[6:0])
+        7'b0110011: // R-type: add, sub, and, xor
+            imm_addr = {(BIT_W){1'b0}};
+        7'b0010011: // I-type: addi, slli, slti, srai
+            begin
+                if(instruction[14:12]==3'b001 || instruction[14:12]==3'b101) // slli, srai
+                    imm_addr = {{(BIT_W-5){instruction[24]}},instruction[24:20]};
+                else if(instruction[14:12]==3'b000 || instruction[14:12]==3'b010) // addi, slti
+                    imm_addr = {{(BIT_W-12){instruction[31]}},instruction[31:20]};
+            end
+        7'b0000011: // I-type: lw
+            imm_addr = {{(BIT_W-12){instruction[31]}},instruction[31:20]};
+        7'b1100111: // I-type: jalr
+            imm_addr = {{(BIT_W-12){instruction[31]}},instruction[31:20]};
+        7'b0100011: // S-type: sw 
+            imm_addr = {{(BIT_W-12){instruction[31]}},instruction[31:25],instruction[11:7]};
+        7'b1100011: // B-type: beq, bge, blt, bne
+            imm_addr = {{(BIT_W-12){instruction[31]}},instruction[31],instruction[7],instruction[30:25],instruction[11:8]};
+        7'b1101111: // J-type: jal 
+            imm_addr = {{(BIT_W-20){instruction[31]}},instruction[31],instruction[19:12],instruction[20],instruction[30:21]};
+        7'b0010111: // U-type: auipc
+            imm_addr ={instruction[31:12],12'b0};
+        default:   
+            imm_addr = {(BIT_W){1'b0}};
+        endcase
+    end    
+
+endmodule
+
+module Alu_control(
+    input [6:0] opcode,
+    input [1:0] ALUOp, 
+    input [2:0] func3,
+    input instruction_30;
+    output [3:0] AluControl
+);
+    reg [3:0] alu_control;
+
+    always @(*) begin
+        case(ALUOp)
+            2'b00: alu_control = 4'b0010; // add
+            2'b01: alu_control = 4'b0110; // subtract
+            2'b10: begin
+                case(instruction_30)
+                    1'b0: begin
+                        case(func3) 
+                            3'b000: alu_control = 4'b0010; // add
+                            3'b111: alu_control = 4'b0000; // and
+                            3'b110: alu_control = 4'b0001; // or
+                        endcase
+                    end
+                    1'b1: alu_control = 4'b0110; // subtract
+                endcase                
+            end
+            default: alu_control = 4'b0000;
+        endcase        
+    end
+
+    assign AluControl = alu_control;
+endmodule
+
+module Shift_left_1#(parameter BIT_W = 32)(
+    input [BIT_W-1:0] imm_addr;
+);
 endmodule
 
 module Reg_file(i_clk, i_rst_n, wen, rs1, rs2, rd, wdata, rdata1, rdata2);
