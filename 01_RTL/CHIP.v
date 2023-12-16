@@ -38,12 +38,12 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // TODO: any declaration
-        reg [BIT_W-1:0] PC, next_PC;
+        reg [BIT_W-1:0] PC, next_PC, last_PC;
         wire mem_cen, mem_wen;
         wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
         wire mem_stall;
 
-        wire Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite;
+        wire Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite, Jal, Jalr;
         wire [1:0] ALUOp;
         wire [BIT_W-1:0] WriteData, ReadData1, ReadData2, ReadData;
         wire [BIT_W-1:0] alu_in_2;
@@ -68,7 +68,18 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
-    Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite));
+    PC_control pc_control(
+        .PC(PC),
+        .imm(imm_addr),
+        .Jump(jump),
+        .Jal(Jal),
+        .Jalr(Jalr),
+        .ALUresult(ALUresult),
+        .next_PC(next_PC)
+    );
+
+    Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg),
+                    .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite), .Jal(Jal), .Jalr(Jalr));
     Immediate_gen imm_gen(.instruction(i_IMEM_data), .imm_addr(imm_addr));
     Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), ione(imm_addr), .out(alu_in_2));
     memory mem(.i_clk(i_clk), .i_rst_n(i_rst_n), .i_cen(o_DMEM_cen), .i_wen(o_DMEM_wen),
@@ -118,15 +129,61 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // Todo: any combinational/sequential circuit
-    always @(posedge i_clk or negedge i_rst_n) begin
-        if (!i_rst_n) begin
-            PC <= 32'h00010000; // Do not modify this value!!!
+    always @(posedge clk or negedge rst_n)begin
+        if(mem_rdata_I[6:0]==7'b0110011 && mem_rdata_I[31:25]==7'b0000001)begin
+            //start
+            if(last_PC != PC)begin
+                valid <= 1'b1;
+                state_nxt  <= MULTI;
+            end
+            else if (!mul_ready) begin
+                valid <= 1'b0;
+                state_nxt <= MULTI;
+            end
+            else begin
+                valid <= 1'b0;
+                state_nxt >= SINGLE ;
+            end
+        end
+        else if(mem_rdata_I[6:0]==7'b1110011)
+            o_finish <= 1'b1;
+        else if(i_DMEM_stall) begin
+            valid = 1'b0;
+            state_nxt = STALL;
         end
         else begin
-            PC <= next_PC;
+            valid = 1'b0;
+            state_nxt = SINGLE;
         end
     end
 
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            PC <= 32'h00010000; // Do not modify this value!!!
+            state <= SINGLE;
+            last_PC = 32'h00010000;
+        end
+        else begin
+            last_PC <= PC;
+            if (state_nxt == MULTI) begin
+                PC <= PC;
+                state <= state_nxt;
+            end
+            else begin
+                PC <= next_PC;
+                state <= state_nxt;
+            end
+        end
+    end
+
+endmodule
+
+module PC_control(
+    input [31:0] PC, imm, ALUresult; 
+    input Jump, Jal, Jalr;
+    output [31:0] next_PC
+);
+    assign next_PC = ((jump) | Jal) ? PC + (imm << 1'b1) : (Jalr) ? ALUresult : PC + 32'd4;
 endmodule
 
 module Mux #(parameter BIT_W = 32)(
@@ -317,14 +374,6 @@ module Alu_control(
     end
 
     assign AluControl = alu_control;
-endmodule
-
-module Shift_left_1#(parameter BIT_W = 32)(
-    input [BIT_W-1:0] imm_addr,
-    output [BIT_W-1:0] imm_offset
-);
-
-assign imm_offset = imm_addr << 1;
 endmodule
 
 module Reg_file(i_clk, i_rst_n, wen, rs1, rs2, rd, wdata, rdata1, rdata2);
