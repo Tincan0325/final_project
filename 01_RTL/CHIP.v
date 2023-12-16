@@ -79,6 +79,17 @@ module CHIP #(                                                                  
         .rdata2 (ReadData2)
     );
 
+     basic_alu ALU(
+        // input
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n), 
+        .in_A(ReadData1),
+        .in_B(alu_in_2),
+        .AluControl(AluControl),
+        // output
+        .out(ALUresult),
+        .zero(Zero)
+    );
 
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
