@@ -38,7 +38,10 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // TODO: any declaration
-        reg [BIT_W-1:0] PC = 32'h00010000;
+        reg [BIT_W-1:0] PC, next_PC;
+        wire mem_cen, mem_wen;
+        wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
+        wire mem_stall;
 
         wire Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite;
         wire [1:0] ALUOp;
@@ -54,13 +57,14 @@ module CHIP #(                                                                  
 
     // TODO: any wire assignment
     assign jump = Branch && Zero;
-
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite));
     Immediate_gen imm_gen(.instruction(i_IMEM_data), .imm_addr(imm_addr));
     Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), ione(imm_addr), .out(alu_in_2));
+    memory mem(.i_clk(i_clk), .i_rst_n(i_rst_n), .i_cen, .i_wen,
+               .i_addr, .i_wdata, .o_rdata, .o_stall, .i_offset, .i_ubound, .i_cache);
 
     // TODO: Reg_file wire connection
     Reg_file reg0(               
@@ -282,8 +286,11 @@ module Alu_control(
 endmodule
 
 module Shift_left_1#(parameter BIT_W = 32)(
-    input [BIT_W-1:0] imm_addr;
+    input [BIT_W-1:0] imm_addr,
+    output [BIT_W-1:0] imm_offset
 );
+
+assign imm_offset = imm_addr << 1;
 endmodule
 
 module Reg_file(i_clk, i_rst_n, wen, rs1, rs2, rd, wdata, rdata1, rdata2);
