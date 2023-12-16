@@ -347,6 +347,78 @@ module Reg_file(i_clk, i_rst_n, wen, rs1, rs2, rd, wdata, rdata1, rdata2);
         end       
     end
 endmodule
+module basic_alu(
+    // input
+    clk,
+    in_A,
+    in_B,
+    AluControl,
+    // output
+    out,
+    zero
+);
+    input clk;
+    input [31:0] in_A, in_B;
+    input [3:0] AluControl;
+
+    output reg [31:0] out;
+    output reg zero;
+
+    always@(*)begin
+        case(AluControl)
+        4'b0000:    //AND
+        begin
+            out = in_A & in_B;
+            zero = 1'b0;
+        end
+        4'b0010:    //ADD
+        begin
+            out = in_A + in_B;
+            zero = 1'b0;
+        end
+        4'b0011:    //SLLI
+        begin
+            out = in_A << in_B;
+            zero = 1'b0;
+        end
+        4'b0100:    //SLTI
+        begin
+            out = ((~in_A+1) < (~in_B+1))?1'b1:1'b0;
+            zero = 1'b0;
+            end
+        4'b0101:    //SRAI
+        begin
+            out = in_A >>> in_B;
+        end
+        4'b0110:    //SUBTRACT
+        begin
+            out = in_A - in_B;
+            zero = (out == 32'b0)?1'b1:1'b0;
+        end
+        4'b1110:    //SUBTRACT bne
+        begin
+            out = in_A - in_B;
+            zero = (out == 32'b0)?1'b0:1'b1;
+        end
+        4'b0111:    //SLT
+        begin
+            out = (in_A < in_B)?32'b1:32'b0;
+            zero = 1'b0;
+        end
+        4'b1100:    //XOR
+        begin
+            out = in_A ^ in_B;
+            zero = 1'b0;
+        end
+        default:
+        begin
+            out =64'b0;
+            zero = 1'b0;
+        end
+        endcase
+    end
+
+endmodule
 
 module MULDIV_unit(
     // TODO: port declaration
