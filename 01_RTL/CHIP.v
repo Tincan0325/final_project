@@ -31,14 +31,16 @@ module CHIP #(                                                                  
     // TODO: any declaration
     parameter word_depth = 32;
     parameter addr_width = 5; // 2^addr_width >= word_depth
-    parameter SINGLE = 1'b0;
-    parameter MULTIPLE = 1'b1;
+    parameter SINGLE = 2'b00;
+    parameter MULTIPLE = 2'b01;
+    parameter STALL = 2'b10;
+
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Wires and Registers
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // TODO: any declaration
-        reg [BIT_W-1:0] PC, next_PC, last_PC;
+        wire [BIT_W-1:0] PC, next_PC, last_PC;
         wire mem_cen, mem_wen;
         wire [BIT_W-1:0] mem_addr, mem_wdata, mem_rdata;
         wire mem_stall;
@@ -48,13 +50,15 @@ module CHIP #(                                                                  
         wire [BIT_W-1:0] WriteData, ReadData1, ReadData2, ReadData;
         wire [BIT_W-1:0] alu_in_2;
         wire Zero;
-        wire [BIT_W-1:0] ALUresult;
+        wire [BIT_W-1:0] ALUresult, imm_addr;
         wire jump; // (Branch && Zero): pc_mux_control
         wire [3:0] AluControl;
 
         wire mul_ready, muldiv_mode;
+        wire [2*BIT_W-1:0] mul_out;
         reg valid;
         reg state, state_nxt;
+        reg out_finish;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Continuous Assignment
@@ -65,6 +69,7 @@ module CHIP #(                                                                  
     assign o_DMEM_cen = MemRead && MemWrite;
     assign o_DMEM_wen = MemWrite;
     assign WriteData = ReadData2;
+    assign o_finish = out_finish;
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -78,13 +83,55 @@ module CHIP #(                                                                  
         .next_PC(next_PC)
     );
 
-    Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg),
-                    .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite), .Jal(Jal), .Jalr(Jalr));
+    Control control(
+        .opcode(i_IMEM_data[6:0]),
+        .Branch(Branch),
+        .MemRead(MemRead),
+        .MemtoReg(MemtoReg),
+        .ALUOp(ALUOp), 
+        .MemWrite(MemWrite),
+        .ALUSrc(ALUSrc),
+        .RegWrite(RegWrite),
+        .Jal(Jal),
+        .Jalr(Jalr)
+    );
+
     Immediate_gen imm_gen(.instruction(i_IMEM_data), .imm_addr(imm_addr));
-    Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), ione(imm_addr), .out(alu_in_2));
-    memory mem(.i_clk(i_clk), .i_rst_n(i_rst_n), .i_cen(o_DMEM_cen), .i_wen(o_DMEM_wen),
-               .i_addr(ALUresult), .i_wdata(WriteData), .o_rdata(ReadData), .o_stall(mem_stall), 
-               .i_offset, .i_ubound, .i_cache);
+    Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), .ione(imm_addr), .out(alu_in_2));
+    /*Cache cache(
+        .i_clk(i_clk),
+        .i_rst_n(i_rst_n),
+        .i_proc_cen(o_DMEM_cen),
+        .i_proc_wen(o_DMEM_wen),
+        .i_proc_addr(ALUresult),
+        .i_proc_wdata(WriteData),
+            output [BIT_W-1:0] o_proc_rdata,
+            output o_proc_stall,
+            input i_proc_finish,
+            output o_cache_finish,
+        // memory interface
+            output o_mem_cen,
+            output o_mem_wen,
+            output [ADDR_W-1:0] o_mem_addr,
+            output [BIT_W*4-1:0]  o_mem_wdata,
+            input [BIT_W*4-1:0] i_mem_rdata,
+            input i_mem_stall,
+            output o_cache_available,
+        // others
+        input  [ADDR_W-1: 0] i_offset)
+    memory mem(
+        .i_clk(i_clk), 
+        .i_rst_n(i_rst_n),
+        .i_cen(o_DMEM_cen),
+        .i_wen(o_DMEM_wen),
+        .i_addr(ALUresult),
+        .i_wdata(WriteData),
+        .o_rdata(ReadData),
+        .o_stall(mem_stall)
+        //.i_offset, 
+        //.i_ubound,
+        //.i_cache
+    );*/
 
     // TODO: Reg_file wire connection
     Reg_file reg0(               
@@ -118,7 +165,7 @@ module CHIP #(                                                                  
         .mode(muldiv_mode), // mode: 0: mulu, 1: divu, 2: and, 3: avg
     
         .in_A(ReadData1), 
-        .in_B(alu_in2),
+        .in_B(alu_in_2),
         //output
         .ready(mul_ready),
         .out(mul_out)
@@ -129,24 +176,24 @@ module CHIP #(                                                                  
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     
     // Todo: any combinational/sequential circuit
-    always @(posedge clk or negedge rst_n)begin
-        if(mem_rdata_I[6:0]==7'b0110011 && mem_rdata_I[31:25]==7'b0000001)begin
+    always @(posedge i_clk or negedge i_rst_n)begin
+        if(i_IMEM_data[6:0]==7'b0110011 && i_IMEM_data[31:25]==7'b0000001)begin
             //start
             if(last_PC != PC)begin
                 valid <= 1'b1;
-                state_nxt  <= MULTI;
+                state_nxt  <= MULTIPLE;
             end
             else if (!mul_ready) begin
                 valid <= 1'b0;
-                state_nxt <= MULTI;
+                state_nxt <= MULTIPLE;
             end
             else begin
                 valid <= 1'b0;
-                state_nxt >= SINGLE ;
+                state_nxt <= SINGLE ;
             end
         end
-        else if(mem_rdata_I[6:0]==7'b1110011)
-            o_finish <= 1'b1;
+        else if(i_IMEM_data[6:0]==7'b1110011)
+            out_finish <= 1'b1;
         else if(i_DMEM_stall) begin
             valid = 1'b0;
             state_nxt = STALL;
@@ -157,15 +204,15 @@ module CHIP #(                                                                  
         end
     end
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge i_clk or negedge i_rst_n) begin
+        if (!i_rst_n) begin
             PC <= 32'h00010000; // Do not modify this value!!!
             state <= SINGLE;
             last_PC = 32'h00010000;
         end
         else begin
             last_PC <= PC;
-            if (state_nxt == MULTI) begin
+            if (state_nxt == MULTIPLE) begin
                 PC <= PC;
                 state <= state_nxt;
             end
@@ -179,11 +226,13 @@ module CHIP #(                                                                  
 endmodule
 
 module PC_control(
-    input [31:0] PC, imm, ALUresult; 
-    input Jump, Jal, Jalr;
-    output [31:0] next_PC
+    input [31:0] PC, imm, ALUresult,
+    input Jump, Jal, Jalr,
+    output reg [31:0] next_PC
 );
-    assign next_PC = ((jump) | Jal) ? PC + (imm << 1'b1) : (Jalr) ? ALUresult : PC + 32'd4;
+    always @* begin
+        next_PC = ((Jump) | Jal) ? PC + (imm << 1'b1) : (Jalr) ? ALUresult : PC + 32'd4;
+    end
 endmodule
 
 module Mux #(parameter BIT_W = 32)(
@@ -196,8 +245,8 @@ endmodule
 
 module Control(
     input [6:0] opcode,
-    output Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite,
-    output [1:0] ALUOp
+    output reg Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite, Jal, Jalr,
+    output reg [1:0] ALUOp
 );
     always @(*) begin
         case (opcode[6:2])
@@ -310,8 +359,8 @@ module Control(
 endmodule
 
 module Immediate_gen #(parameter BIT_W = 32)(
-    input  [BIT_W-1:0] instruction;
-    output [BIT_W-1:0] imm_addr;
+    input  [BIT_W-1:0] instruction,
+    output reg [BIT_W-1:0] imm_addr
 );
     always@(*) begin
         case(instruction[6:0])
@@ -347,7 +396,7 @@ module Alu_control(
     input [6:0] opcode,
     input [1:0] ALUOp, 
     input [2:0] func3,
-    input instruction_30;
+    input instruction_30,
     output [3:0] AluControl
 );
     reg [3:0] alu_control;
@@ -366,7 +415,7 @@ module Alu_control(
                             3'b110: alu_control = 4'b0001; // or
                         endcase
                     end                           
-                    1'b1: alu_control = (func3==3'b101) 4'b1011?4'b0110; // srai, subtract
+                    1'b1: alu_control = (func3==3'b101)? 4'b1011:4'b0110; // srai, subtract
                 endcase                
             end
             default: alu_control = 4'b0000;
@@ -419,23 +468,16 @@ module Reg_file(i_clk, i_rst_n, wen, rs1, rs2, rd, wdata, rdata1, rdata2);
         end       
     end
 endmodule
+
 module basic_alu(
     // input
-    clk,
-    in_A,
-    in_B,
-    AluControl,
+    input i_clk, i_rst_n,
+    input [31:0] in_A, in_B,
+    input [3:0] AluControl,
     // output
-    out,
-    zero
+    output reg [31:0] out,
+    output reg zero
 );
-    input clk;
-    input [31:0] in_A, in_B;
-    input [3:0] AluControl;
-
-    output reg [31:0] out;
-    output reg zero;
-
     always@(*)begin
         case(AluControl)
         4'b0000:    //AND
@@ -529,15 +571,8 @@ module MULDIV_unit(i_clk, i_rst_n, valid, ready, mode, in_A, in_B, out);
             IDLE: begin
                 _ready = 1'd0;
                 case(valid)
-                    0:
-                        state_nxt = IDLE;
-                    1:
-                    case(mode)
-                    0:
-                        state_nxt = MUL;
-                    1:
-                        state_nxt = DIV;
-                    endcase
+                    0:state_nxt = IDLE;
+                    1:state_nxt = MUL;
                 endcase
             end
             MUL :begin
@@ -586,7 +621,7 @@ module MULDIV_unit(i_clk, i_rst_n, valid, ready, mode, in_A, in_B, out);
     end
 
     // Todo 3: ALU output
-    always @( shreg or alu_in )begin //alu_in or posedge clk //negedge clk
+    always @( shreg or alu_in )begin //alu_in or posedge i_clk //negedge i_clk
         case(state)
         MUL:
             // if last bit = 1
@@ -607,7 +642,7 @@ module MULDIV_unit(i_clk, i_rst_n, valid, ready, mode, in_A, in_B, out);
     end
     
     // Todo 4: Shift register
-    always @(  * )begin // alu_out or posedge clk //alu_out or state_nxt or shreg[0]==0
+    always @(  * )begin // alu_out or posedge i_clk //alu_out or state_nxt or shreg[0]==0
         //case(mode)
         case(state)
         MUL://0:
