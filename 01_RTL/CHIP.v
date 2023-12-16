@@ -45,11 +45,12 @@ module CHIP #(                                                                  
 
         wire Branch, MemRead, MemtoReg, MemWrite, ALUSrc, RegWrite;
         wire [1:0] ALUOp;
-        wire [BIT_W-1:0] WriteData, ReadData1, ReadData2;
+        wire [BIT_W-1:0] WriteData, ReadData1, ReadData2, ReadData;
         wire [BIT_W-1:0] alu_in_2;
         wire Zero;
         wire [BIT_W-1:0] ALUresult;
         wire jump; // (Branch && Zero): pc_mux_control
+        wire [3:0] AluControl;
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Continuous Assignment
@@ -57,14 +58,18 @@ module CHIP #(                                                                  
 
     // TODO: any wire assignment
     assign jump = Branch && Zero;
+    assign o_DMEM_cen = MemRead && MemWrite;
+    assign o_DMEM_wen = MemWrite;
+    assign WriteData = ReadData2;
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Submoddules
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
     Control control(.opcode(i_IMEM_data[6:0]), .Branch(Branch), .MemRead(.MemRead), .MemtoReg(MemtoReg), .ALUOp(ALUOp), .MemWrite(MemWrite), .ALUSrc(ALUSrc), .RegWrite(RegWrite));
     Immediate_gen imm_gen(.instruction(i_IMEM_data), .imm_addr(imm_addr));
     Mux mux_reg_alu(.control(ALUSrc), .izero(ReadData2), ione(imm_addr), .out(alu_in_2));
-    memory mem(.i_clk(i_clk), .i_rst_n(i_rst_n), .i_cen, .i_wen,
-               .i_addr, .i_wdata, .o_rdata, .o_stall, .i_offset, .i_ubound, .i_cache);
+    memory mem(.i_clk(i_clk), .i_rst_n(i_rst_n), .i_cen(o_DMEM_cen), .i_wen(o_DMEM_wen),
+               .i_addr(ALUresult), .i_wdata(WriteData), .o_rdata(ReadData), .o_stall(mem_stall), 
+               .i_offset, .i_ubound, .i_cache);
 
     // TODO: Reg_file wire connection
     Reg_file reg0(               
@@ -79,7 +84,7 @@ module CHIP #(                                                                  
         .rdata2 (ReadData2)
     );
 
-     basic_alu ALU(
+    basic_alu ALU(
         // input
         .i_clk(i_clk),
         .i_rst_n(i_rst_n), 
@@ -105,6 +110,7 @@ module CHIP #(                                                                  
             PC <= next_PC;
         end
     end
+
 endmodule
 
 module Mux #(parameter BIT_W = 32)(
@@ -277,16 +283,17 @@ module Alu_control(
         case(ALUOp)
             2'b00: alu_control = 4'b0010; // add
             2'b01: alu_control = 4'b0110; // subtract
-            2'b10: begin
+            2'b10: begin // including: slli, srai
                 case(instruction_30)
                     1'b0: begin
                         case(func3) 
                             3'b000: alu_control = 4'b0010; // add
+                            3'b001: alu_control = 4'b0011; //slli
                             3'b111: alu_control = 4'b0000; // and
                             3'b110: alu_control = 4'b0001; // or
                         endcase
-                    end
-                    1'b1: alu_control = 4'b0110; // subtract
+                    end                           
+                    1'b1: alu_control = (func3==3'b101) 4'b1011?4'b0110; // srai, subtract
                 endcase                
             end
             default: alu_control = 4'b0000;
