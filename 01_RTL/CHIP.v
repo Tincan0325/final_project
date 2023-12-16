@@ -52,6 +52,10 @@ module CHIP #(                                                                  
         wire jump; // (Branch && Zero): pc_mux_control
         wire [3:0] AluControl;
 
+        wire mul_ready, muldiv_mode;
+        reg valid;
+        reg state, state_nxt;
+
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Continuous Assignment
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -96,6 +100,18 @@ module CHIP #(                                                                  
         .zero(Zero)
     );
 
+    MULDIV_unit muldiv(
+        .i_clk(i_clk), 
+        .i_rst_n(i_rst_n),
+        .valid(valid),
+        .mode(muldiv_mode), // mode: 0: mulu, 1: divu, 2: and, 3: avg
+    
+        .in_A(ReadData1), 
+        .in_B(alu_in2),
+        //output
+        .ready(mul_ready),
+        .out(mul_out)
+    );
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------
 // Always Blocks
@@ -427,10 +443,158 @@ module basic_alu(
 
 endmodule
 
-module MULDIV_unit(
-    // TODO: port declaration
-    );
-    // Todo: HW2
+module MULDIV_unit(i_clk, i_rst_n, valid, ready, mode, in_A, in_B, out);
+    // Todo: your HW2
+    // Definition of ports
+    input         i_clk, i_rst_n;
+    input         valid;
+    input         mode; // mode: 0: mulu, 1: divu
+    output        ready;
+    input  [31:0] in_A, in_B;
+    output [63:0] out;
+
+    // Definition of states
+    parameter IDLE = 3'd0;
+    parameter MUL  = 3'd1;
+    parameter OUT  = 3'd2;
+
+    // Todo: Wire and reg if needed
+    reg  [ 2:0] state, state_nxt;
+    reg  [ 4:0] counter, counter_nxt;
+    reg  [63:0] shreg, shreg_nxt;
+    reg  [31:0] alu_in, alu_in_nxt;
+    reg  [32:0] alu_out;
+    reg _ready;
+
+    // Todo: Instatiate any primitives if needed
+    reg [31:0] alu_in2 ,alu_in2_nxt; 
+    
+    // Todo 5: Wire assignments
+    assign ready = _ready ;
+    assign out = shreg ;
+
+    // Combinational always block
+    // Todo 1: Next-state logic of state machine
+    always @(*) begin
+        case(state)
+            IDLE: begin
+                _ready = 1'd0;
+                case(valid)
+                    0:
+                        state_nxt = IDLE;
+                    1:
+                    case(mode)
+                    0:
+                        state_nxt = MUL;
+                    1:
+                        state_nxt = DIV;
+                    endcase
+                endcase
+            end
+            MUL :begin
+                state_nxt = ( counter==31 ) ? OUT : MUL ;
+                _ready=1'd0;
+            end
+            OUT :begin 
+                state_nxt = IDLE;
+                _ready = 1'd1;
+            end
+            default :
+            begin
+                _ready=1'd0;
+                state_nxt = IDLE ;
+             end
+        endcase
+    end
+    // Todo 2: Counter
+    always @(shreg_nxt) begin
+        counter_nxt = (state % 2 ) ? counter+1 : 5'd0  ;
+    end
+
+    // ALU input
+    always @(*) begin
+        case(state)
+            IDLE: begin
+                if (valid) begin
+                    alu_in_nxt = in_B;
+                    alu_in2_nxt =in_A ;
+                    
+                end
+                else begin
+                       alu_in_nxt = 0;
+                       alu_in2_nxt =32'd0 ;
+                end
+            end
+            OUT : begin
+                alu_in_nxt = 0;
+                alu_in2_nxt =32'd0 ;
+            end
+            default: begin
+                alu_in_nxt = alu_in;
+                alu_in2_nxt = alu_in2;
+            end
+        endcase
+    end
+
+    // Todo 3: ALU output
+    always @( shreg or alu_in )begin //alu_in or posedge clk //negedge clk
+        case(state)
+        MUL:
+            // if last bit = 1
+            begin
+                if (shreg[0]) begin
+                    alu_out = (shreg[63:32]+alu_in);//in_A + alu_in;in_B ;
+                end
+                else begin
+                    alu_out = (shreg[63:32]);
+                end
+                // quo = 0 ;
+            end
+        default:
+        begin
+            alu_out= shreg[63:32];// alu_out;
+        end    
+        endcase 
+    end
+    
+    // Todo 4: Shift register
+    always @(  * )begin // alu_out or posedge clk //alu_out or state_nxt or shreg[0]==0
+        //case(mode)
+        case(state)
+        MUL://0:
+            if (shreg[0])
+                shreg_nxt <= {alu_out[32:0],shreg[31:1]};//{1'd0,alu_out[31:0],shreg[31:1]};
+            else
+                shreg_nxt <= {1'd0,alu_out[31:0],shreg[31:1]};
+        IDLE:
+            if(mode ==0 )
+                shreg_nxt <= {32'd0, alu_in2_nxt};
+            else if(mode ==1)
+                shreg_nxt <= {31'd0, alu_in2_nxt,1'd0};
+            else
+                shreg_nxt <=64'd0;
+        default: 
+            shreg_nxt <= shreg;//64'd0;//
+        endcase 
+    end
+
+    // Todo: Sequential always block
+    always @(posedge i_clk or negedge i_rst_n) begin
+        if (!i_rst_n) begin
+            state <= IDLE;
+            counter <= 5'd0;
+            shreg <= 64'd0 ;
+            alu_in <= 32'd0 ;
+            alu_in2 <= 32'd0 ;
+        end
+        else begin
+            state <= state_nxt;
+            counter <= counter_nxt ;
+            shreg <= shreg_nxt ;
+            alu_in <= alu_in_nxt ;
+            alu_in2 <= alu_in2_nxt ;
+        end
+    end
 endmodule
 
 module Cache#(
